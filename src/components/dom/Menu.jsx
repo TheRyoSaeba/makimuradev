@@ -4,9 +4,9 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 const PROJECTS = [
     {
         number: '01',
-        title: 'The Director',
-        desc: 'PBBG GAME',
-        url: 'https://thedirector.app'
+        title: 'MY PLACEHOLDER',
+        desc: ' ',
+        url: 'google.com'
     }
 ]
 
