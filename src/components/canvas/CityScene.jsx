@@ -18,6 +18,9 @@ const DRIFT = { x: 0.32, y: 0.18 }
 // On narrow screens, keep this point of the art (between the two leads) centred.
 const FOCAL_X = 0.44
 
+// Until a visitor finds the characters themselves, each one glints in turn.
+const HINT = { first: 1.6, every: 7, length: 1.5, stagger: 0.75 }
+
 // `anchor` places each hover callout, in background UV (origin bottom-left).
 const CAST = {
     man: { channel: 0, color: '#ff3b4d', label: 'Episodes', jp: '事件簿', view: 'projects', anchor: [0.23, 0.37] },
@@ -67,13 +70,21 @@ function useHitTest(mask) {
     }, [mask])
 }
 
-export function CityScene({ entered, view, ending, onSelect, onHover }) {
+// A soft rise and fall over HINT.length seconds; 0 outside it.
+function glint(t) {
+    if (t < 0 || t > HINT.length) return 0
+    return Math.sin((Math.PI * t) / HINT.length) ** 2 * 0.8
+}
+
+export function CityScene({ entered, view, ending, onSelect, onHover, preview }) {
     const [bg, mask] = useTexture([BG_URL, MASK_URL])
     const layout = useLayout(bg)
     const hitTest = useHitTest(mask)
     const [hovered, setHoveredState] = useState(null)
+    const [hinting, setHinting] = useState(null)
     const mat = useRef()
     const clock = useRef(0)
+    const hint = useRef({ discovered: false, next: null })
     const { camera, gl } = useThree()
 
     useEffect(() => {
@@ -85,6 +96,7 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
     }, [bg, mask, gl])
 
     const setHovered = useCallback((who) => {
+        if (who) hint.current.discovered = true
         setHoveredState(who)
         onHover?.(who)
         document.body.style.cursor = who ? 'pointer' : ''
@@ -123,6 +135,7 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
         uBeat: { value: 0 },
         uFocusMan: { value: 0 },
         uFocusWoman: { value: 0 },
+        uHint: { value: new THREE.Vector2() },
         uPanel: { value: 0 },
         uFreeze: { value: 0 },
         uIntro: { value: 0 },
@@ -135,8 +148,28 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
         clock.current += dt * (1 - freeze) * (reducedMotion ? 0.25 : 1)
         u.uTime.value = clock.current
         u.uBeat.value = getLevel() * (1 - freeze)
-        u.uFocusMan.value = damp(u.uFocusMan.value, hovered === 'man' ? 1 : 0, 6, dt)
-        u.uFocusWoman.value = damp(u.uFocusWoman.value, hovered === 'woman' ? 1 : 0, 6, dt)
+        const lit = hovered || preview
+        u.uFocusMan.value = damp(u.uFocusMan.value, lit === 'man' ? 1 : 0, 6, dt)
+        u.uFocusWoman.value = damp(u.uFocusWoman.value, lit === 'woman' ? 1 : 0, 6, dt)
+
+        // Advertise the characters: Ryo glints, then Kaori, every few seconds
+        // while the scene is idle, until someone hovers or picks one.
+        const h = hint.current
+        if (lit) h.discovered = true
+        const now = state.clock.elapsedTime
+        let man = 0, woman = 0
+        if (interactive && !lit && !h.discovered) {
+            if (h.next === null) h.next = now + HINT.first
+            const t = now - h.next
+            man = glint(t)
+            woman = glint(t - HINT.stagger)
+            if (t > HINT.length + HINT.stagger) h.next = now + HINT.every
+        } else if (h.next !== null) {
+            h.next = now + HINT.every
+        }
+        u.uHint.value.set(man, woman)
+        const showing = man > 0.35 ? 'man' : woman > 0.35 ? 'woman' : null
+        if (showing !== hinting) setHinting(showing)
         u.uPanel.value = damp(u.uPanel.value, view !== 'main' ? 1 : 0, 5, dt)
         u.uFreeze.value = damp(freeze, ending ? 1 : 0, ending ? 9 : 3, dt)
         u.uIntro.value = damp(u.uIntro.value, entered ? 1 : 0.0, 1.6, dt)
@@ -158,7 +191,8 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
         camera.lookAt(camera.position.x * 0.6, camera.position.y * 0.6, DEPTH)
     })
 
-    const callout = hovered && CAST[hovered]
+    const labelled = hovered || preview || hinting
+    const callout = labelled && CAST[labelled]
 
     return (
         <group>
@@ -168,7 +202,7 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
             </mesh>
             {callout && (
                 <Html
-                    key={hovered}
+                    key={labelled}
                     position={[
                         layout.bgX + (callout.anchor[0] - 0.5) * layout.bgW,
                         layout.bgY + (callout.anchor[1] - 0.5) * layout.bgH,
@@ -178,7 +212,7 @@ export function CityScene({ entered, view, ending, onSelect, onHover }) {
                     zIndexRange={[20, 10]}
                     style={{ pointerEvents: 'none' }}
                 >
-                    <div className={`callout callout--${hovered}`}>
+                    <div className={`callout callout--${labelled}`}>
                         <span className="callout__jp">{callout.jp}</span>
                         <span className="callout__label">{callout.label}</span>
                     </div>

@@ -22,6 +22,7 @@ export const backgroundFragment = /* glsl */ `
     uniform float uBeat;       // music energy 0..1
     uniform float uFocusMan;   // 0..1 spotlight on Ryo
     uniform float uFocusWoman; // 0..1 spotlight on Kaori
+    uniform vec2 uHint;        // 0..1 rim-only glint that advertises each character
     uniform float uPanel;      // 0..1 a panel is open: dim, blur, desaturate
     uniform float uFreeze;     // 0..1 ending freeze-frame grade
     uniform float uIntro;      // 0..1 fade up from black
@@ -133,16 +134,19 @@ export const backgroundFragment = /* glsl */ `
         }
 
         // Spotlight: everything but the hovered character falls into shadow.
-        float focus = max(uFocusMan, uFocusWoman);
-        float lifted = clamp(man * uFocusMan + woman * uFocusWoman, 0.0, 1.0);
+        // A glint borrows a gentler version of the spotlight so it reads even
+        // against the brightest part of the skyline.
+        vec2 spot = max(vec2(uFocusMan, uFocusWoman), uHint * 0.55);
+        float focus = max(spot.x, spot.y);
+        float lifted = clamp(man * spot.x + woman * spot.y, 0.0, 1.0);
         vec3 shadow = mix(col, vec3(lum), 0.55) * vec3(0.26, 0.27, 0.42);
         col = mix(col, shadow, focus * (1.0 - lifted));
         col *= 1.0 + lifted * 0.08;
 
-        if (focus > 0.004) {
+        vec2 k = max(vec2(uFocusMan, uFocusWoman), uHint);
+        if (max(k.x, k.y) > 0.004) {
             vec2 line, glow, inner;
             rim(uv, cm, line, glow, inner);
-            vec2 k = vec2(uFocusMan, uFocusWoman);
             // An energy band sweeps up the body; the line itself burns white-hot.
             float travel = fract(uTime * 0.45 - uv.y * 1.6 + uv.x * 0.5);
             float sweep = smoothstep(0.0, 0.25, travel) * smoothstep(0.55, 0.25, travel);
