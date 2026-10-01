@@ -1,5 +1,6 @@
 // The whole look lives in one pass over the key art: the city breathes,
-// the sky moves, and the hovered character is lifted out of a dimmed frame.
+// the sky moves, and the hovered character is lifted out of a dimmed frame
+// with a rim light traced around their full silhouette.
 // Doing it here instead of a post-processing stack keeps it to a single
 // full-screen draw with no extra render targets.
 
@@ -13,12 +14,10 @@ export const passVertex = /* glsl */ `
 
 export const backgroundFragment = /* glsl */ `
     uniform sampler2D uMap;
-    uniform sampler2D uMan;
-    uniform sampler2D uWoman;
-    uniform vec2 uManRect;     // x0, width in background UV
-    uniform vec2 uWomanRect;
-    uniform vec2 uManFade;     // feather (left, right) where the cutout art is cropped
-    uniform vec2 uWomanFade;
+    uniform sampler2D uMask;   // full-body silhouettes: r = Ryo, g = Kaori
+    uniform vec2 uPx;          // one screen pixel, in background UV
+    uniform vec3 uColorMan;
+    uniform vec3 uColorWoman;
     uniform float uTime;
     uniform float uBeat;       // music energy 0..1
     uniform float uFocusMan;   // 0..1 spotlight on Ryo
@@ -47,11 +46,24 @@ export const backgroundFragment = /* glsl */ `
         return v;
     }
 
-    float cutout(sampler2D tex, vec2 rect, vec2 fade, vec2 uv) {
-        vec2 c = vec2((uv.x - rect.x) / rect.y, uv.y);
-        if (c.x < 0.0 || c.x > 1.0) return 0.0;
-        float feather = smoothstep(0.0, fade.x + 1e-4, c.x) * smoothstep(1.0, 1.0 - fade.y - 1e-4, c.x);
-        return texture2D(tex, c).a * feather;
+    // Rim light for both silhouettes at once. Max over rings at growing
+    // screen-space radii gives the outside edge (crisp line, glow, wide halo);
+    // the min over the inner ring gives light wrapping just inside the edge.
+    // x = Ryo, y = Kaori.
+    void rim(vec2 uv, vec2 self, out vec2 line, out vec2 glow, out vec2 inner) {
+        vec2 near = vec2(0.0), far = vec2(0.0), halo = vec2(0.0), inside = vec2(1.0);
+        for (int i = 0; i < 16; i++) {
+            float ang = float(i) * 0.39270;
+            vec2 dir = vec2(cos(ang), sin(ang)) * uPx;
+            vec2 n = texture2D(uMask, uv + dir * 1.5).rg;
+            near = max(near, n);
+            inside = min(inside, texture2D(uMask, uv + dir * 4.0).rg);
+            far = max(far, texture2D(uMask, uv + dir * 7.0).rg);
+            halo = max(halo, texture2D(uMask, uv + dir * 16.0).rg);
+        }
+        line = clamp(near - self, 0.0, 1.0);
+        glow = clamp(far - self, 0.0, 1.0) * 0.5 + clamp(halo - self, 0.0, 1.0) * 0.22;
+        inner = clamp(self - inside, 0.0, 1.0) * self;
     }
 
     vec3 sampleBlurred(vec2 uv, float r) {
@@ -81,8 +93,9 @@ export const backgroundFragment = /* glsl */ `
             col.b = texture2D(uMap, uv - fromCenter * ca).b;
         }
 
-        float man = cutout(uMan, uManRect, uManFade, uv);
-        float woman = cutout(uWoman, uWomanRect, uWomanFade, uv);
+        vec2 cm = texture2D(uMask, uv).rg;
+        float man = cm.x;
+        float woman = cm.y;
         float people = max(man, woman);
         float lum = dot(col, vec3(0.299, 0.587, 0.114));
 
@@ -126,6 +139,19 @@ export const backgroundFragment = /* glsl */ `
         col = mix(col, shadow, focus * (1.0 - lifted));
         col *= 1.0 + lifted * 0.08;
 
+        if (focus > 0.004) {
+            vec2 line, glow, inner;
+            rim(uv, cm, line, glow, inner);
+            vec2 k = vec2(uFocusMan, uFocusWoman);
+            // An energy band sweeps up the body; the line itself burns white-hot.
+            float travel = fract(uTime * 0.45 - uv.y * 1.6 + uv.x * 0.5);
+            float sweep = smoothstep(0.0, 0.25, travel) * smoothstep(0.55, 0.25, travel);
+            float pulse = 0.8 + sweep * 0.8 + uBeat * 0.4;
+            vec3 rc = uColorMan * k.x * (glow.x + inner.x * 0.55) + uColorWoman * k.y * (glow.y + inner.y * 0.55);
+            vec3 core = mix(uColorMan, vec3(1.0), 0.7) * line.x * k.x + mix(uColorWoman, vec3(1.0), 0.7) * line.y * k.y;
+            col += (rc + core * 1.2) * pulse;
+        }
+
         // Panel open: push the scene back so type sits on it cleanly.
         vec3 recessed = mix(col, vec3(lum) * vec3(0.55, 0.6, 1.0), 0.6) * 0.32;
         col = mix(col, recessed, uPanel);
@@ -143,43 +169,5 @@ export const backgroundFragment = /* glsl */ `
         // Texture is sampled without sRGB decode, so this math happens in the
         // same display space the art was painted in.
         gl_FragColor = vec4(col, 1.0);
-    }
-`
-
-// Rim light traced around a cutout's alpha: sample a ring, keep what lies
-// just outside the silhouette, and run an energy sweep along it.
-export const outlineFragment = /* glsl */ `
-    uniform sampler2D uTexture;
-    uniform float uIntensity;
-    uniform float uTime;
-    uniform vec3 uColor;
-    uniform float uTexelScale;
-    uniform vec2 uFade;
-    varying vec2 vUv;
-
-    void main() {
-        if (uIntensity < 0.005) discard;
-        float feather = smoothstep(0.0, uFade.x + 1e-4, vUv.x) * smoothstep(1.0, 1.0 - uFade.y - 1e-4, vUv.x);
-        float a = texture2D(uTexture, vUv).a;
-        vec2 texel = uTexelScale / vec2(textureSize(uTexture, 0));
-
-        float nearRing = 0.0, farRing = 0.0;
-        for (int i = 0; i < 16; i++) {
-            float ang = float(i) * 0.3927;
-            vec2 dir = vec2(cos(ang), sin(ang));
-            nearRing = max(nearRing, texture2D(uTexture, vUv + dir * texel * 2.0).a);
-            farRing = max(farRing, texture2D(uTexture, vUv + dir * texel * 6.0).a);
-        }
-
-        float line = clamp(nearRing - a, 0.0, 1.0);
-        float glow = clamp(farRing - a, 0.0, 1.0) * 0.45;
-
-        float travel = fract(uTime * 0.45 - vUv.y * 1.4 + vUv.x * 0.6);
-        float sweep = smoothstep(0.0, 0.25, travel) * smoothstep(0.55, 0.25, travel);
-
-        vec3 c = mix(uColor, vec3(1.0), line * 0.8) * (line + glow) * (0.75 + sweep * 0.9);
-        float alpha = (line + glow) * uIntensity * feather;
-        if (alpha < 0.003) discard;
-        gl_FragColor = vec4(c * uIntensity * feather, alpha);
     }
 `
