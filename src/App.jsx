@@ -24,6 +24,8 @@ export default function App() {
     const [view, setView] = useState('main')
     const [ending, setEnding] = useState(false)
     const [hovered, setHovered] = useState(null)
+    // A character lit from the HUD chips rather than by pointing at them.
+    const [preview, setPreview] = useState(null)
     const [burst, setBurst] = useState(null)
 
     const enter = useCallback((withSound) => {
@@ -33,6 +35,7 @@ export default function App() {
 
     const go = useCallback((next, x, y) => {
         if (x != null) setBurst({ x, y, id: performance.now() })
+        setPreview(null)
         setEnding(false)
         setView(next)
     }, [])
@@ -58,14 +61,14 @@ export default function App() {
     return (
         <>
             <ChalkDefs />
-            <Scene entered={entered} view={view} ending={ending} onSelect={go} onHover={setHovered} />
+            <Scene entered={entered} view={view} ending={ending} onSelect={go} onHover={setHovered} preview={preview} />
 
             <div className="ui">
                 <AnimatePresence>
                     {entered && !ending && (
                         <Hud key="hud" view={view} go={go} onEnding={roll} />
                     )}
-                    {entered && view === 'main' && !ending && <Hero key="hero" hovered={hovered} go={go} />}
+                    {entered && view === 'main' && !ending && <Hero key="hero" lit={hovered || preview} go={go} onPreview={setPreview} />}
                 </AnimatePresence>
 
                 <AnimatePresence mode="wait">

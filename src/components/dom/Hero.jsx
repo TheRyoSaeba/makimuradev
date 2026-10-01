@@ -7,7 +7,15 @@ const rise = (delay) => ({
     exit: { opacity: 0, y: 16, transition: { duration: 0.25 } },
 })
 
-export function Hero({ hovered, go }) {
+export function Hero({ lit, go, onPreview }) {
+    // Pointing at (or tabbing to) a chip lights that character up in the scene.
+    const chip = (who) => ({
+        onPointerEnter: () => onPreview(who),
+        onPointerLeave: () => onPreview(null),
+        onFocus: () => onPreview(who),
+        onBlur: () => onPreview(null),
+    })
+
     return (
         <section className="hero" aria-label="Title">
             <h1 className="title">
@@ -16,10 +24,10 @@ export function Hero({ hovered, go }) {
             </h1>
             <motion.div className="hero__cast" initial={{ opacity: 0 }}
                 animate={{ opacity: 1, transition: { delay: 1.5, duration: 0.7 } }} exit={{ opacity: 0 }}>
-                <button className={`cast cast--man ${hovered === 'man' ? 'is-on' : ''}`} onClick={() => go('projects')}>
+                <button className={`cast cast--man ${lit === 'man' ? 'is-on' : ''}`} onClick={() => go('projects')} {...chip('man')}>
                     <i />Ryo <span>→ Episodes</span>
                 </button>
-                <button className={`cast cast--woman ${hovered === 'woman' ? 'is-on' : ''}`} onClick={() => go('about')}>
+                <button className={`cast cast--woman ${lit === 'woman' ? 'is-on' : ''}`} onClick={() => go('about')} {...chip('woman')}>
                     <i />Kaori <span>→ Profile</span>
                 </button>
             </motion.div>
